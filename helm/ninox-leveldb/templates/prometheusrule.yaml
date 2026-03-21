@@ -15,7 +15,7 @@ spec:
           for: 5m
           labels: { severity: warning }
           annotations:
-            summary: "Pod {{ $labels.pod }} NVMe storage > 85%"
+            summary: "Pod {{`{{ $labels.pod }}`}} NVMe storage > 85%"
             description: "Expand PVC before LevelDB stops writing."
 
         - alert: PersistentVolumeCriticalUsage
@@ -23,7 +23,7 @@ spec:
           for: 2m
           labels: { severity: critical }
           annotations:
-            summary: "CRITICAL: Pod {{ $labels.pod }} volume almost full"
+            summary: "CRITICAL: Pod {{`{{ $labels.pod }}`}} volume almost full"
             description: "LevelDB will stop writing. Expand immediately."
 
         - alert: LevelDBPodCrashLooping
@@ -31,7 +31,7 @@ spec:
           for: 2m
           labels: { severity: critical }
           annotations:
-            summary: "Pod {{ $labels.pod }} crash-looping"
+            summary: "Pod {{`{{ $labels.pod }}`}} crash-looping"
             description: "Check init-leveldb-lock container logs."
 
         - alert: LevelDBHydrationFailed
@@ -39,8 +39,8 @@ spec:
           for: 2m
           labels: { severity: warning }
           annotations:
-            summary: "EFS hydration initContainer failed on {{ $labels.pod }}"
-            description: "Method 1 copy failed. Check: kubectl logs {{ $labels.pod }} -c data-sync-from-efs"
+            summary: "EFS hydration initContainer failed on {{`{{ $labels.pod }}`}}"
+            description: "Method 1 copy failed. Check: kubectl logs {{`{{ $labels.pod }}`}} -c data-sync-from-efs"
 
         - alert: VeleroBackupNotRecent
           expr: (time() - velero_backup_last_successful_timestamp{schedule="leveldb-6h-backup"}) > 25200
@@ -48,7 +48,7 @@ spec:
           labels: { severity: warning }
           annotations:
             summary: "Velero RPO exceeded — no backup in 7+ hours"
-            description: "Last backup: {{ $value | humanizeDuration }} ago."
+            description: "Last backup: {{`{{ $value | humanizeDuration }}`}} ago."
 
         - alert: VeleroBackupFailed
           expr: velero_backup_failure_total{schedule="leveldb-6h-backup"} > 0
