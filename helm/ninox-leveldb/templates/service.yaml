@@ -1,5 +1,4 @@
 ---
-# ── Headless Service (required for StatefulSet DNS) ──────────────
 apiVersion: v1
 kind: Service
 metadata:
@@ -8,19 +7,14 @@ metadata:
   labels:
     {{- include "ninox-leveldb.labels" . | nindent 4 }}
 spec:
-  clusterIP: None   # Headless — gives pod-0.svc.ns.svc.cluster.local DNS
+  clusterIP: None
+  publishNotReadyAddresses: true
   selector:
     {{- include "ninox-leveldb.selectorLabels" . | nindent 4 }}
   ports:
-    - name: http
-      port: 8080
-      targetPort: http
-    - name: metrics
-      port: 9090
-      targetPort: metrics
-
+    - { name: http,    port: {{ .Values.app.port }},        targetPort: http }
+    - { name: metrics, port: {{ .Values.app.metricsPort }}, targetPort: metrics }
 ---
-# ── ClusterIP Service (load-balanced access) ──────────────────────
 apiVersion: v1
 kind: Service
 metadata:
@@ -33,13 +27,8 @@ spec:
   selector:
     {{- include "ninox-leveldb.selectorLabels" . | nindent 4 }}
   ports:
-    - name: http
-      port: {{ .Values.service.port }}
-      targetPort: http
-      protocol: TCP
-
+    - { name: http, port: {{ .Values.service.port }}, targetPort: http }
 ---
-# ── PodDisruptionBudget — always keep 2 pods running ─────────────
 {{- if .Values.podDisruptionBudget.enabled }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -54,9 +43,7 @@ spec:
     matchLabels:
       {{- include "ninox-leveldb.selectorLabels" . | nindent 6 }}
 {{- end }}
-
 ---
-# ── ServiceMonitor — Prometheus scraping ─────────────────────────
 {{- if .Values.serviceMonitor.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
@@ -79,4 +66,31 @@ spec:
   namespaceSelector:
     matchNames:
       - {{ .Release.Namespace }}
+{{- end }}
+---
+{{- if .Values.vpa.enabled }}
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: {{ include "ninox-leveldb.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ninox-leveldb.labels" . | nindent 4 }}
+spec:
+  targetRef:
+    apiVersion: "apps/v1"
+    kind: StatefulSet
+    name: {{ include "ninox-leveldb.fullname" . }}
+  updatePolicy:
+    updateMode: {{ .Values.vpa.updateMode | quote }}
+  resourcePolicy:
+    containerPolicies:
+      - containerName: application
+        minAllowed:
+          cpu:    {{ .Values.vpa.minAllowed.cpu | quote }}
+          memory: {{ .Values.vpa.minAllowed.memory | quote }}
+        maxAllowed:
+          cpu:    {{ .Values.vpa.maxAllowed.cpu | quote }}
+          memory: {{ .Values.vpa.maxAllowed.memory | quote }}
+        controlledResources: ["cpu", "memory"]
 {{- end }}

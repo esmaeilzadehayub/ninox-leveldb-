@@ -26,3 +26,11 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 app.kubernetes.io/name: {{ include "ninox-leveldb.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
+
+{{/*
+EFS PVC name for a given pod index.
+Usage: {{ include "ninox-leveldb.efsPVCName" (dict "index" 0 "Release" .Release) }}
+*/}}
+{{- define "ninox-leveldb.efsPVCName" -}}
+efs-migration-staging-pod{{ .index }}
+{{- end }}

@@ -5,6 +5,8 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "ninox-leveldb.labels" . | nindent 4 }}
+  annotations:
+    migration/method: {{ .Values.migration.method | quote }}
 spec:
   serviceName: {{ include "ninox-leveldb.fullname" . }}
   replicas: {{ .Values.replicaCount }}
@@ -15,32 +17,33 @@ spec:
     type: RollingUpdate
     rollingUpdate:
       partition: 0
+
   template:
     metadata:
       labels:
         {{- include "ninox-leveldb.labels" . | nindent 8 }}
       annotations:
-        # ── Velero: back up the data-volume PVC via Kopia ──────────
+        # Velero: include data-volume in Kopia file-system backup
         backup.velero.io/backup-volumes: data-volume
-
-        # ── Prometheus: scrape metrics from this pod ────────────────
+        # Prometheus scraping
         prometheus.io/scrape: "true"
-        prometheus.io/port: "9090"
+        prometheus.io/port: {{ .Values.app.metricsPort | quote }}
         prometheus.io/path: "/metrics"
 
     spec:
-      # ── Only schedule on NVMe nodes ──────────────────────────────
+      serviceAccountName: {{ include "ninox-leveldb.fullname" . }}
+
+      # Schedule only on NVMe nodes
       nodeSelector:
         ninox/storage: nvme
 
-      # ── Tolerate the NVMe node taint ─────────────────────────────
       tolerations:
         - key: "workload-type"
           operator: "Equal"
           value: "leveldb"
           effect: "NoSchedule"
 
-      # ── Spread pods across AZs and nodes ─────────────────────────
+      # Spread across AZs and nodes for HA
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
@@ -55,30 +58,107 @@ spec:
             matchLabels:
               {{- include "ninox-leveldb.selectorLabels" . | nindent 14 }}
 
-      # ── Init container: clear stale LevelDB LOCK file ─────────────
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+
+      # ──────────────────────────────────────────────────────────
+      # INIT CONTAINERS
+      # ──────────────────────────────────────────────────────────
       initContainers:
-        - name: init-leveldb
+
+        # ── Always: clear stale LevelDB LOCK file ─────────────
+        # LevelDB leaves /LOCK on crash. Without removal the DB
+        # fails to open and the pod crash-loops.
+        - name: init-leveldb-lock
           image: busybox:1.36
           command:
             - /bin/sh
             - -c
             - |
-              set -e
-              DATA_DIR="/var/lib/leveldb"
-              mkdir -p "${DATA_DIR}"
-              # LevelDB leaves a LOCK file on crash — remove it so DB opens
-              if [ -f "${DATA_DIR}/LOCK" ]; then
-                echo "Stale LOCK found, removing..."
-                rm -f "${DATA_DIR}/LOCK"
+              DATA="{{ .Values.app.dataDir }}"
+              mkdir -p "$DATA"
+              if [ -f "$DATA/LOCK" ]; then
+                echo "Stale LOCK found — removing"
+                rm -f "$DATA/LOCK"
               fi
-              echo "Init complete"
+              echo "Lock check complete"
           volumeMounts:
             - name: data-volume
-              mountPath: /var/lib/leveldb
+              mountPath: {{ .Values.app.dataDir }}
           securityContext:
             runAsUser: 0
+            allowPrivilegeEscalation: false
 
-      # ── Main application container ────────────────────────────────
+        # ── METHOD 1: Hydration initContainer (RECOMMENDED) ───
+        # If NVMe PVC is empty and EFS has data, copy it once.
+        # After copy, app runs entirely on fast NVMe — EFS unmounts.
+        # The [ -z "$(ls -A /data)" ] check prevents overwriting on restart.
+        {{- if eq .Values.migration.method "hydration" }}
+        - name: data-sync-from-efs
+          image: {{ .Values.migration.copyImage }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              DATA="{{ .Values.app.dataDir }}"
+              EFS="/mnt/efs"
+
+              # Only hydrate if NVMe volume is empty (first run)
+              if [ -z "$(ls -A $DATA 2>/dev/null)" ]; then
+                echo "NVMe PVC is empty — hydrating from EFS..."
+
+                # Check EFS has data before starting copy
+                if [ -z "$(ls -A $EFS 2>/dev/null)" ]; then
+                  echo "WARNING: EFS is also empty. DataSync may not have run yet."
+                  echo "Proceeding with empty volume (first-ever deployment)."
+                  exit 0
+                fi
+
+                # Install rsync if not present (alpine image)
+                which rsync 2>/dev/null || apk add --no-cache rsync
+
+                echo "Starting rsync EFS → NVMe..."
+                echo "EFS size: $(du -sh $EFS | cut -f1)"
+
+                rsync \
+                  --archive \
+                  --checksum \
+                  --verbose \
+                  --human-readable \
+                  --progress \
+                  --exclude "LOCK" \
+                  --exclude "*.tmp" \
+                  "$EFS/" \
+                  "$DATA/"
+
+                echo "Hydration complete. NVMe size: $(du -sh $DATA | cut -f1)"
+                echo "App will now run on NVMe. EFS mount is no longer needed."
+              else
+                echo "NVMe PVC already has data ($(du -sh $DATA | cut -f1)) — skipping hydration."
+                echo "This is normal on pod restart."
+              fi
+          volumeMounts:
+            - name: lvm-storage     # NVMe LVM volume — destination
+              mountPath: {{ .Values.app.dataDir }}
+            - name: efs-migration   # EFS staging volume — source (read-only)
+              mountPath: /mnt/efs
+              readOnly: true
+          resources:
+            requests: { cpu: "500m", memory: "512Mi" }
+            limits:   { cpu: "2",    memory: "2Gi" }
+          securityContext:
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+        {{- end }}
+
+      # ──────────────────────────────────────────────────────────
+      # MAIN APPLICATION CONTAINER
+      # ──────────────────────────────────────────────────────────
       containers:
         - name: application
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -86,31 +166,41 @@ spec:
 
           ports:
             - name: http
-              containerPort: 8080
+              containerPort: {{ .Values.app.port }}
               protocol: TCP
             - name: metrics
-              containerPort: 9090
+              containerPort: {{ .Values.app.metricsPort }}
               protocol: TCP
 
           env:
             - name: LEVELDB_DATA_DIR
-              value: /var/lib/leveldb
+              value: {{ .Values.app.dataDir | quote }}
+            - name: MIGRATION_METHOD
+              value: {{ .Values.migration.method | quote }}
             - name: POD_NAME
               valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
+                fieldRef: { fieldPath: metadata.name }
             - name: POD_NAMESPACE
               valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
+                fieldRef: { fieldPath: metadata.namespace }
             - name: NODE_NAME
               valueFrom:
-                fieldRef:
-                  fieldPath: spec.nodeName
+                fieldRef: { fieldPath: spec.nodeName }
 
           volumeMounts:
+            # Method 1 (hydration): app uses NVMe only — EFS data was already copied
+            # Method 2 (double-mount): app uses NVMe; EFS is side-car for verification
+            # Method 3 (velero): Velero already restored data to NVMe; no EFS at all
             - name: data-volume
-              mountPath: /var/lib/leveldb
+              mountPath: {{ .Values.app.dataDir }}
+
+            {{- if eq .Values.migration.method "double-mount" }}
+            # Method 2: mount EFS alongside NVMe for verification / comparison
+            - name: efs-migration
+              mountPath: /mnt/migration-archive
+              readOnly: true
+            {{- end }}
+
             - name: tmp
               mountPath: /tmp
 
@@ -123,11 +213,8 @@ spec:
           readinessProbe:
             {{- toYaml .Values.readinessProbe | nindent 12 }}
 
-          # Startup probe: give large datasets 10 minutes to load
           startupProbe:
-            httpGet:
-              path: /healthz
-              port: 8080
+            httpGet: { path: /healthz, port: {{ .Values.app.port }} }
             failureThreshold: 60
             periodSeconds: 10
 
@@ -139,38 +226,82 @@ spec:
             capabilities:
               drop: [ALL]
 
-          # Graceful shutdown: give LevelDB time to flush WAL
           lifecycle:
             preStop:
               exec:
-                command: ["/bin/sh", "-c", "sleep 5"]
+                command: ["/bin/sh", "-c", "sleep 10"]
 
       terminationGracePeriodSeconds: 60
 
-      # Pod-level security
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        fsGroup: 1000
-        seccompProfile:
-          type: RuntimeDefault
-
+      # ──────────────────────────────────────────────────────────
+      # VOLUMES
+      # ──────────────────────────────────────────────────────────
       volumes:
         - name: tmp
           emptyDir: {}
 
-  # ── PVC template — provisioned by TopoLVM from NVMe node-vg ──────
+        # EFS migration volume (Methods 1 + 2 only)
+        {{- if or (eq .Values.migration.method "hydration") (eq .Values.migration.method "double-mount") }}
+        {{- if .Values.migration.efsFileSystemId }}
+        - name: efs-migration
+          csi:
+            driver: efs.csi.aws.com
+            readOnly: true
+            volumeAttributes:
+              fileSystemId: {{ .Values.migration.efsFileSystemId | quote }}
+              # Each pod mounts its own subdirectory:
+              # pod-0 → /pod-0, pod-1 → /pod-1, pod-2 → /pod-2
+              # The POD_INDEX is resolved by TopoLVM scheduler to the correct node.
+              # For static subdirectory per pod, use the PVC approach in efs-pvc.yaml.
+              directoryPath: "{{ .Values.migration.efsSubdirectory }}"
+        {{- end }}
+        {{- end }}
+
+  # ──────────────────────────────────────────────────────────────
+  # PVC TEMPLATE — NVMe via TopoLVM
+  #
+  # lvm-storage / data-volume:
+  #   storageClass = topolvm-provisioner
+  #   → TopoLVM carves an LV from node-vg (NVMe disk)
+  #   → WaitForFirstConsumer = topology-aware (pod + PV on same node)
+  #   → reclaimPolicy = Retain (NEVER auto-delete LevelDB data)
+  # ──────────────────────────────────────────────────────────────
   volumeClaimTemplates:
+    - metadata:
+        name: lvm-storage
+        labels:
+          {{- include "ninox-leveldb.labels" . | nindent 10 }}
+        annotations:
+          backup.velero.io/backup-volumes: lvm-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: "topolvm-provisioner"
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+
+    # Alias so both .Values.app.dataDir and pod spec work
+    # (data-volume is the name used in volumeMounts)
     - metadata:
         name: data-volume
         labels:
           {{- include "ninox-leveldb.labels" . | nindent 10 }}
-        annotations:
-          # Velero includes this PVC in file-system backup
-          backup.velero.io/backup-volumes: data-volume
       spec:
         accessModes: ["ReadWriteOnce"]
-        storageClassName: "topolvm-provisioner"   # NVMe LVM volume
+        storageClassName: "topolvm-provisioner"
         resources:
           requests:
-            storage: {{ .Values.persistence.size }}   # 800Gi (2Ti if using EBS)
+            storage: {{ .Values.persistence.size }}
+
+---
+# ── ServiceAccount ────────────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "ninox-leveldb.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ninox-leveldb.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.serviceAccount.annotations | nindent 4 }}
+automountServiceAccountToken: false

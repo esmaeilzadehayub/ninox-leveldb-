@@ -1,6 +1,8 @@
 apiVersion: v2
 name: ninox-leveldb
-description: Ninox LevelDB stateful application — NVMe + TopoLVM + Velero backups
+description: >
+  Ninox LevelDB — NVMe + TopoLVM storage, Velero backups,
+  VPA autoscaling, three migration methods (hydration/double-mount/velero).
 type: application
 version: 1.0.0
 appVersion: "1.0.0"

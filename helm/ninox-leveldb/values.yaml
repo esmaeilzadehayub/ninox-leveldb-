@@ -1,9 +1,14 @@
 replicaCount: 3
 
 image:
-  repository: "your-ecr-account.dkr.ecr.eu-west-1.amazonaws.com/ninox-leveldb"
+  repository: "ACCOUNT.dkr.ecr.eu-west-1.amazonaws.com/ninox-leveldb"
   tag: "latest"
   pullPolicy: IfNotPresent
+
+app:
+  port: 8080
+  metricsPort: 9090
+  dataDir: /var/lib/leveldb
 
 service:
   type: ClusterIP
@@ -18,39 +23,58 @@ resources:
     memory: "16Gi"
 
 persistence:
-  size: 2Ti
-  storageClass: topolvm-provisioner
+  size: 800Gi
+  storageClass: topolvm-provisioner   # NVMe LVM via TopoLVM
 
-# Probe configuration
 livenessProbe:
-  httpGet:
-    path: /healthz
-    port: 8080
+  httpGet: { path: /healthz, port: 8080 }
   initialDelaySeconds: 30
   periodSeconds: 10
   failureThreshold: 3
 
 readinessProbe:
-  httpGet:
-    path: /ready
-    port: 8080
+  httpGet: { path: /ready, port: 8080 }
   initialDelaySeconds: 15
   periodSeconds: 5
   failureThreshold: 3
 
-# VPA
 vpa:
   enabled: true
-  updateMode: "Auto"
+  updateMode: "Off"   # → "Auto" after 2-week baselining
+  minAllowed: { cpu: "1", memory: "4Gi" }
+  maxAllowed: { cpu: "16", memory: "64Gi" }
 
-# PodDisruptionBudget
 podDisruptionBudget:
   enabled: true
   minAvailable: 2
 
-# ServiceMonitor (Prometheus scraping)
 serviceMonitor:
   enabled: true
   interval: 30s
   labels:
     release: prometheus-stack
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT:role/ninox-production-app"
+
+# ── Migration configuration ───────────────────────────────────────
+# method:
+#   "hydration"    — Method 1 (RECOMMENDED)
+#                    initContainer copies EFS → NVMe on first boot.
+#                    App always runs on fast NVMe. EFS is discarded after copy.
+#
+#   "double-mount" — Method 2
+#                    Both EFS (/mnt/migration-archive) and NVMe (/var/lib/leveldb)
+#                    mounted simultaneously. Good for verification side-by-side.
+#
+#   "velero"       — Method 3
+#                    No EFS needed. DataSync → S3. Velero restores directly
+#                    into the NVMe PVC. Run: velero restore create ...
+#
+#   "none"         — Fresh cluster, no migration (default after migration complete)
+migration:
+  method: "hydration"
+  efsFileSystemId: ""          # Set to EFS filesystem ID from terraform output
+  efsSubdirectory: "/pod"      # DataSync wrote /pod-0, /pod-1, /pod-2
+  copyImage: "alpine:3.19"     # Image used by initContainer / migration Job

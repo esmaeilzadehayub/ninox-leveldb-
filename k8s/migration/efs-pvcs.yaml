@@ -1,0 +1,49 @@
+# ──────────────────────────────────────────────────────────────────
+# EFS PVs + PVCs — one per pod
+#
+# Replace fs-REPLACE_WITH_ID with actual EFS filesystem ID:
+#   terraform output efs_filesystem_id
+#
+# Apply: kubectl apply -f efs-pvcs.yaml
+# Remove after migration: kubectl delete -f efs-pvcs.yaml
+# ──────────────────────────────────────────────────────────────────
+{{- range $i := list 0 1 2 }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: efs-migration-pv-pod{{ $i }}
+  labels:
+    purpose: migration
+    pod-index: "{{ $i }}"
+spec:
+  capacity:
+    storage: 2Ti
+  volumeMode: Filesystem
+  accessModes:
+    - ReadOnlyMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: efs-migration
+  csi:
+    driver: efs.csi.aws.com
+    # Format: <fs-id>:/<subdirectory>
+    # DataSync wrote each server's data to /pod-0, /pod-1, /pod-2
+    volumeHandle: "fs-REPLACE_WITH_ID:/pod-{{ $i }}"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: efs-migration-staging-pod{{ $i }}
+  namespace: production
+  labels:
+    purpose: migration
+    delete-after: migration-complete
+spec:
+  accessModes:
+    - ReadOnlyMany
+  storageClassName: efs-migration
+  volumeName: efs-migration-pv-pod{{ $i }}
+  resources:
+    requests:
+      storage: 2Ti
+{{- end }}
