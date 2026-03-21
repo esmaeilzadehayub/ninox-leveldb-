@@ -3,42 +3,9 @@
 Production EKS infrastructure for Ninox's stateful LevelDB application.  
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  CI/CD Pipeline                                                              │
-│  Code ──► GitHub Actions ──► Docker Build ──► Trivy Scan ──► ECR ──► EKS  │
-└──────────────────────────────────────┬───────────────────────────────────────┘
-                                       │
-┌──────────────────────────────────────▼───────────────────────────────────────┐
-│  Kubernetes Cluster  (EKS · eu-west-1 · 3 AZs)                              │
-│                                                                              │
-│  ┌────────────────── StatefulSet ────────────────────┐                       │
-│  │   App Pod 1        App Pod 2        App Pod 3     │                       │
-│  │   LevelDB          LevelDB          LevelDB       │                       │
-│  │      │                │                │          │                       │
-│  │   PV (NVMe)       PV (NVMe)       PV (NVMe)      │                       │
-│  │      └────────────────┴────────────────┘          │                       │
-│  │               LevelDB Storage (TopoLVM)           │                       │
-│  └──────────────────────────────────────┬────────────┘                       │
-│                                         │                                    │
-│              ┌──────────────────────────┴──────────────────────┐             │
-│              │  LVM & Backup                                   │             │
-│              │  LVM Snapshot ──► Restic/Kopia ──► S3 Bucket   │             │
-│              │  Velero Schedule: every 6 h                     │             │
-│              └─────────────────────────────────────────────────┘             │
-│                                                                              │
-│  ┌── Security ──────────────────────────────────────────────────────────┐   │
-│  │  RBAC · TLS (cert-manager) · Wazuh (FIM + IDS) · OPA Gatekeeper     │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────────────────────┘
-         │                          │                           │
-         ▼                          ▼                           ▼
-┌─ Monitoring ───────┐   ┌─ Logging (ELK) ──────────┐  ┌─ Tracing ──────────┐
-│  Prometheus        │   │  Elasticsearch            │  │  Jaeger            │
-│  Grafana           │   │  Logstash                 │  │  OpenTelemetry SDK │
-│  Alertmanager      │   │  Kibana                   │  └────────────────────┘
-└────────────────────┘   └───────────────────────────┘
+<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/600031ec-7757-4cc9-8d18-764dac1f5e5f" />
 
+```
 ── Migration Strategy 
 
 Migration:
