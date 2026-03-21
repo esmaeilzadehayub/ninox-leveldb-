@@ -1,0 +1,82 @@
+---
+# ── Headless Service (required for StatefulSet DNS) ──────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ninox-leveldb.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ninox-leveldb.labels" . | nindent 4 }}
+spec:
+  clusterIP: None   # Headless — gives pod-0.svc.ns.svc.cluster.local DNS
+  selector:
+    {{- include "ninox-leveldb.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+
+---
+# ── ClusterIP Service (load-balanced access) ──────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ninox-leveldb.fullname" . }}-lb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ninox-leveldb.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "ninox-leveldb.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+
+---
+# ── PodDisruptionBudget — always keep 2 pods running ─────────────
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "ninox-leveldb.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ninox-leveldb.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "ninox-leveldb.selectorLabels" . | nindent 6 }}
+{{- end }}
+
+---
+# ── ServiceMonitor — Prometheus scraping ─────────────────────────
+{{- if .Values.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "ninox-leveldb.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ninox-leveldb.labels" . | nindent 4 }}
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "ninox-leveldb.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+      path: /metrics
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+{{- end }}

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ninox-leveldb
+description: Ninox LevelDB stateful application — NVMe + TopoLVM + Velero backups
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

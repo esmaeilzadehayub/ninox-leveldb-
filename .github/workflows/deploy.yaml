@@ -1,0 +1,144 @@
+name: Deploy — Terraform + Helm
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy"
+        required: true
+      skip_terraform:
+        description: "Skip Terraform apply (helm only)"
+        type: boolean
+        default: false
+
+env:
+  AWS_REGION: eu-west-1
+  CLUSTER_NAME: ninox-production
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # ── 1. Terraform apply ───────────────────────────────────────────
+  terraform:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.skip_terraform }}
+    environment: production
+    concurrency:
+      group: terraform-production
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/ninox-production-github-actions
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.7.0" }
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Terraform Apply
+        working-directory: terraform
+        run: |
+          terraform apply \
+            -var="grafana_admin_password=${{ secrets.GRAFANA_PASSWORD }}" \
+            -auto-approve \
+            -no-color
+        env:
+          TF_VAR_grafana_admin_password: ${{ secrets.GRAFANA_PASSWORD }}
+
+  # ── 2. Helm deploy ────────────────────────────────────────────────
+  helm-deploy:
+    name: Helm Deploy
+    runs-on: ubuntu-latest
+    needs: terraform
+    if: always() && (needs.terraform.result == 'success' || needs.terraform.result == 'skipped')
+    environment: production
+    concurrency:
+      group: helm-production
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/ninox-production-github-actions
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        with: { version: "3.14.0" }
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          TAG="${{ inputs.image_tag || github.ref_name }}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Deploying: ${TAG}"
+
+      - name: Helm upgrade — atomic (auto-rollback on failure)
+        run: |
+          helm upgrade --install ninox-leveldb helm/ninox-leveldb \
+            --namespace production \
+            --create-namespace \
+            --set image.repository="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/ninox-leveldb" \
+            --set image.tag="${{ steps.tag.outputs.tag }}" \
+            --atomic \
+            --wait \
+            --timeout 15m \
+            --history-max 10
+
+      - name: Verify rollout
+        run: |
+          kubectl rollout status statefulset/ninox-leveldb \
+            -n production --timeout=10m
+          READY=$(kubectl get sts ninox-leveldb -n production \
+            -o jsonpath='{.status.readyReplicas}')
+          DESIRED=$(kubectl get sts ninox-leveldb -n production \
+            -o jsonpath='{.spec.replicas}')
+          echo "Pods: ${READY}/${DESIRED}"
+          [ "$READY" = "$DESIRED" ] || exit 1
+
+      - name: Smoke test
+        run: |
+          kubectl run smoke --image=curlimages/curl:8.7.1 \
+            --restart=Never --rm -it -n production \
+            -- curl -sf http://ninox-leveldb-lb:8080/healthz
+          echo "✓ Health check passed"
+
+      - name: Velero backup post-deploy
+        run: |
+          # Trigger an immediate backup after deploy so we have a clean restore point
+          velero backup create "post-deploy-${GITHUB_SHA:0:8}" \
+            --include-namespaces production \
+            --default-volumes-to-fs-backup=true \
+            --ttl 720h \
+            --wait || true   # Don't fail deploy if backup fails
+
+      - name: Notify Slack
+        if: always()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "${{ job.status == 'success' && '✅' || '🚨' }} *ninox-leveldb* `${{ steps.tag.outputs.tag }}` → *production* (${{ job.status }})",
+              "channel": "#deployments"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

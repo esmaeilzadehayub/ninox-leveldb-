@@ -1,0 +1,56 @@
+replicaCount: 3
+
+image:
+  repository: "your-ecr-account.dkr.ecr.eu-west-1.amazonaws.com/ninox-leveldb"
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
+resources:
+  requests:
+    cpu: "2"
+    memory: "8Gi"
+  limits:
+    cpu: "4"
+    memory: "16Gi"
+
+persistence:
+  size: 800Gi           # i4i.xlarge has 937 GB NVMe — leave headroom
+  storageClass: topolvm-provisioner
+
+# Probe configuration
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 8080
+  initialDelaySeconds: 15
+  periodSeconds: 5
+  failureThreshold: 3
+
+# VPA
+vpa:
+  enabled: true
+  updateMode: "Auto"
+
+# PodDisruptionBudget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+# ServiceMonitor (Prometheus scraping)
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  labels:
+    release: prometheus-stack
