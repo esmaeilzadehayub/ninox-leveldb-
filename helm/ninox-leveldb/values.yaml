@@ -18,7 +18,7 @@ resources:
     memory: "16Gi"
 
 persistence:
-  size: 800Gi           # i4i.xlarge has 937 GB NVMe — leave headroom
+  size: 2Ti
   storageClass: topolvm-provisioner
 
 # Probe configuration

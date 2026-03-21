@@ -27,10 +27,11 @@ variable "availability_zones" {
 }
 
 # ── Node sizing ───────────────────────────────────────────────────
-# i4i.xlarge: 4 vCPU / 32 GB RAM / 937 GB NVMe — ideal for LevelDB
+# i4i.4xlarge: 16 vCPU / 128 GB RAM / 3750 GB NVMe
+# Gives enough local capacity for 2 TiB PVC + snapshot headroom.
 variable "nvme_instance_type" {
   type    = string
-  default = "i4i.xlarge"
+  default = "i4i.4xlarge"
 }
 
 variable "nvme_min_size" {
@@ -81,7 +82,7 @@ variable "app_image_tag" {
 }
 
 variable "pvc_size" {
-  description = "PVC size per pod — NVMe on i4i.xlarge is ~937 GB"
+  description = "PVC size per pod"
   type        = string
-  default     = "800Gi"
+  default     = "2Ti"
 }

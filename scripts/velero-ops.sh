@@ -18,6 +18,7 @@ VELERO_NS="velero"
 
 ok()  { echo "✓ $*"; }
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
+warn(){ echo "⚠ $*" >&2; }
 die() { echo "✗ ERROR: $*" >&2; exit 1; }
 
 # ── status ────────────────────────────────────────────────────────

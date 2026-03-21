@@ -1,7 +1,7 @@
 # ──────────────────────────────────────────────────────────────────
 # EKS — terraform-aws-modules/eks/aws  v19
 #
-# Node group:  i4i.xlarge (937 GB local NVMe)
+# Node group:  i4i.4xlarge (3750 GB local NVMe)
 # Userdata:    lvm2 + pvcreate + vgcreate on /dev/nvme1n1
 #              → creates Volume Group "node-vg" for TopoLVM
 # ──────────────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ module "eks" {
 
     # ── Stateful NVMe nodes (LevelDB workload) ────────────────
     stateful_nvme = {
-      instance_types = [var.nvme_instance_type]   # i4i.xlarge
+      instance_types = [var.nvme_instance_type]   # i4i.4xlarge
       min_size       = var.nvme_min_size           # 3
       max_size       = var.nvme_max_size           # 6
       desired_size   = var.nvme_min_size           # Start at min
