@@ -2,7 +2,7 @@ name: Deploy — Terraform + Helm
 
 on:
   push:
-    tags: ["v*.*.*"]
+    tags: [main]
   workflow_dispatch:
     inputs:
       image_tag:
