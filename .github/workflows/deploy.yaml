@@ -27,7 +27,7 @@ jobs:
   terraform:
     name: Terraform Apply
     runs-on: ubuntu-latest
-    if: ${{ !inputs.skip_terraform }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_terraform) }}
     environment: production
     concurrency:
       group: terraform-production
@@ -88,8 +88,16 @@ jobs:
 
       - name: Resolve image tag
         id: tag
+        env:
+          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
-          TAG="${{ inputs.image_tag || github.ref_name }}"
+          if [ -n "${INPUT_IMAGE_TAG:-}" ]; then
+            TAG="${INPUT_IMAGE_TAG}"
+          elif [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            TAG="latest"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "Deploying: ${TAG}"
 
@@ -102,7 +110,7 @@ jobs:
             --set image.tag="${{ steps.tag.outputs.tag }}" \
             --atomic \
             --wait \
-            --timeout 15m \
+            --timeout 45m \
             --history-max 10
 
       - name: Verify rollout

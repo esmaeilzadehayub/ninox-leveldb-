@@ -3,6 +3,8 @@
 Production EKS infrastructure for Ninox's stateful LevelDB application.  
 ## Architecture
 
+See **[docs/architecture.md](docs/architecture.md)** (diagram + trade-offs) and **[docs/backup-restore-lvm-restic.md](docs/backup-restore-lvm-restic.md)** (LVM + Velero FS backup, RPO, restore).
+
 <img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/600031ec-7757-4cc9-8d18-764dac1f5e5f" />
 
 ```
@@ -148,12 +150,13 @@ ninox-k8s/
 
 | Decision | Rationale |
 |---|---|
-| NVMe over EBS | 17× IOPS — LevelDB compaction is I/O-bound |
-| EFS not for LevelDB | Breaks LOCK file enforcement; 30× slower; LVM needs block device |
-| EFS only for migration | Temporary staging only — deleted after migration |
-| VPA over HPA | LevelDB is single-process; HPA creates N isolated DBs |
-| Method 1 (Hydration) | App always runs on NVMe; EFS is a one-time seed |
-| Velero every 6h | Meets 6h RPO; Kopia handles NVMe local volumes via FS backup |
+| **Single TopoLVM PVC per pod** | One LV holds LevelDB data; init + app + backup must share it (two PVCs would split hydration vs runtime data). |
+| **i4i.4xlarge NVMe nodes** | ~2 Ti per pod needs **3750 GB** local NVMe; `i4i.xlarge` (937 GB) cannot fit a **2 Ti** LV. |
+| NVMe over gp3 EBS for DB | Local NVMe latency and IOPS fit LevelDB compaction; TopoLVM on NVMe. |
+| EFS not for steady-state LevelDB | NFS semantics break single-writer / LOCK expectations; use only as migration source. |
+| VPA vs HPA | **VPA** for CPU/RAM per replica; **HPA** only if you intentionally run **sharded** DBs (each replica = separate dataset). |
+| Method 1 (Hydration) | App runs on NVMe; EFS is a one-time seed. |
+| Velero **node-agent** every **6h** | Meets **6h RPO**; FS backup of the LVM mount to S3 (Kopia uploader in current Velero — same class as legacy Restic). |
 
 ---
 

@@ -70,41 +70,8 @@ resource "helm_release" "prometheus_stack" {
   })]
 }
 
-resource "kubernetes_manifest" "leveldb_alerts" {
-  manifest = {
-    apiVersion = "monitoring.coreos.com/v1"
-    kind       = "PrometheusRule"
-    metadata   = { name = "leveldb-alerts", namespace = "monitoring", labels = { release = "prometheus-stack", "app.kubernetes.io/managed-by" = "terraform" } }
-    spec = { groups = [{ name = "LevelDBStorage", rules = [
-      { alert  = "PersistentVolumeHighUsage"
-        expr   = "kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes > 0.85"
-        for    = "5m"
-        labels = { severity = "warning" }
-      annotations = { summary = "StatefulSet Pod {{ $labels.pod }} storage usage > 85%", description = "NVMe volume {{ $labels.persistentvolumeclaim }} needs expansion." } },
-      { alert  = "PersistentVolumeCriticalUsage"
-        expr   = "kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes > 0.95"
-        for    = "2m"
-        labels = { severity = "critical" }
-      annotations = { summary = "CRITICAL: Pod {{ $labels.pod }} volume almost full", description = "LevelDB will stop writing. Expand PVC immediately." } },
-      { alert  = "LevelDBPodCrashLooping"
-        expr   = "rate(kube_pod_container_status_restarts_total{namespace=\"production\",pod=~\"ninox-leveldb-.*\"}[5m]) * 60 > 1"
-        for    = "2m"
-        labels = { severity = "critical" }
-      annotations = { summary = "Pod {{ $labels.pod }} crash-looping", description = "Check init-leveldb container logs." } },
-      { alert  = "VeleroBackupNotRecent"
-        expr   = "(time() - velero_backup_last_successful_timestamp{schedule=\"leveldb-6h-backup\"}) > 25200"
-        for    = "5m"
-        labels = { severity = "warning" }
-      annotations = { summary = "Velero RPO exceeded — no backup in 7+ hours", description = "Last backup: {{ $value | humanizeDuration }} ago." } },
-      { alert  = "VeleroBackupFailed"
-        expr   = "velero_backup_failure_total{schedule=\"leveldb-6h-backup\"} > 0"
-        for    = "5m"
-        labels = { severity = "warning" }
-      annotations = { summary = "Velero backup failed", description = "kubectl logs -n velero deploy/velero | tail -50" } },
-    ] }] }
-  }
-  depends_on = [helm_release.prometheus_stack]
-}
+# PrometheusRules for ninox-leveldb live in helm/ninox-leveldb/templates/prometheusrule.yaml
+# (single source of truth; avoids duplicate "leveldb-alerts" with Terraform + Helm)
 
 resource "helm_release" "loki" {
   name            = "loki"

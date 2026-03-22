@@ -31,7 +31,7 @@ initContainers:
           echo "NVMe already has data — skipping hydration"
         fi
     volumeMounts:
-      - name: lvm-storage      # NVMe destination (ReadWriteOnce)
+      - name: data-volume      # TopoLVM NVMe LV (ReadWriteOnce)
         mountPath: /data
       - name: efs-migration    # EFS source (ReadOnlyMany)
         mountPath: /mnt/efs
@@ -57,7 +57,7 @@ Both volumes mounted simultaneously. App reads/writes NVMe. EFS visible as read-
 containers:
   - name: application
     volumeMounts:
-      - name: lvm-storage            # Primary — NVMe LVM
+      - name: data-volume            # Primary — NVMe LVM (TopoLVM)
         mountPath: /var/lib/leveldb
       - name: efs-migration          # Secondary — EFS archive (read-only)
         mountPath: /mnt/migration-archive

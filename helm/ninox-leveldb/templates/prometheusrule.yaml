@@ -35,25 +35,26 @@ spec:
             description: "Check init-leveldb-lock container logs."
 
         - alert: LevelDBHydrationFailed
-          expr: kube_pod_init_container_status_last_terminated_reason{namespace="{{ .Release.Namespace }}",pod=~"{{ include "ninox-leveldb.fullname" . }}-.*",container="data-sync-from-efs"} == 1
+          expr: kube_pod_init_container_status_last_terminated_reason{namespace="{{ .Release.Namespace }}",reason="Error",container="data-sync-from-efs"} == 1
           for: 2m
           labels: { severity: warning }
           annotations:
             summary: "EFS hydration initContainer failed on {{`{{ $labels.pod }}`}}"
             description: "Method 1 copy failed. Check: kubectl logs {{`{{ $labels.pod }}`}} -c data-sync-from-efs"
 
+        # Velero exposes these on /metrics (ServiceMonitor enabled). RPO target 6h → alert if >7h since last success.
         - alert: VeleroBackupNotRecent
-          expr: (time() - velero_backup_last_successful_timestamp{schedule="leveldb-6h-backup"}) > 25200
-          for: 5m
+          expr: (time() - max(velero_backup_last_successful_timestamp)) > 25200
+          for: 10m
           labels: { severity: warning }
           annotations:
-            summary: "Velero RPO exceeded — no backup in 7+ hours"
-            description: "Last backup: {{`{{ $value | humanizeDuration }}`}} ago."
+            summary: "Velero RPO at risk — no successful backup in 7+ hours"
+            description: "Verify schedule leveldb-6h-backup and node-agent on NVMe nodes. kubectl get backup -n velero"
 
         - alert: VeleroBackupFailed
-          expr: velero_backup_failure_total{schedule="leveldb-6h-backup"} > 0
+          expr: increase(velero_backup_failure_total[30m]) > 0
           for: 5m
           labels: { severity: warning }
           annotations:
-            summary: "Velero backup failed"
-            description: "kubectl logs -n velero deploy/velero | tail -50"
+            summary: "Velero reported backup failures"
+            description: "kubectl logs -n velero deploy/velero -c velero | tail -80"

@@ -23,8 +23,8 @@ resources:
     memory: "16Gi"
 
 persistence:
-  size: 800Gi
-  storageClass: topolvm-provisioner   # NVMe LVM via TopoLVM
+  size: 2Ti
+  storageClass: topolvm-provisioner   # NVMe LVM via TopoLVM (challenge: ~2 TB per pod)
 
 livenessProbe:
   httpGet: { path: /healthz, port: 8080 }

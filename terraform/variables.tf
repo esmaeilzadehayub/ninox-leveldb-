@@ -29,10 +29,11 @@ variable "availability_zones" {
 }
 
 # ── Node sizing ───────────────────────────────────────────────────
-# i4i.xlarge: 4 vCPU / 32 GB / 937 GB NVMe (~275K IOPS, <100µs latency)
+# i4i.4xlarge: 16 vCPU / 128 GB / 3750 GB NVMe — required for ~2 Ti PVC per pod
+# (i4i.xlarge 937 GB cannot satisfy a 2 Ti TopoLVM LV)
 variable "nvme_instance_type" {
   type    = string
-  default = "i4i.xlarge"
+  default = "i4i.4xlarge"
 }
 
 variable "nvme_min_size" {
@@ -78,7 +79,7 @@ variable "app_replica_count" {
 
 variable "pvc_size" {
   type    = string
-  default = "800Gi"
+  default = "2Ti"
 }
 
 # ── S3 ────────────────────────────────────────────────────────────

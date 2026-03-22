@@ -23,7 +23,7 @@ spec:
       labels:
         {{- include "ninox-leveldb.labels" . | nindent 8 }}
       annotations:
-        # Velero: include data-volume in Kopia file-system backup
+        # Velero node-agent: file-level backup of the TopoLVM (LVM) volume to S3
         backup.velero.io/backup-volumes: data-volume
         # Prometheus scraping
         prometheus.io/scrape: "true"
@@ -143,7 +143,7 @@ spec:
                 echo "This is normal on pod restart."
               fi
           volumeMounts:
-            - name: lvm-storage     # NVMe LVM volume — destination
+            - name: data-volume     # Same TopoLVM LV as the app (single PVC)
               mountPath: {{ .Values.app.dataDir }}
             - name: efs-migration   # EFS staging volume — source (read-only)
               mountPath: /mnt/efs
@@ -258,30 +258,17 @@ spec:
         {{- end }}
 
   # ──────────────────────────────────────────────────────────────
-  # PVC TEMPLATE — NVMe via TopoLVM
+  # PVC TEMPLATE — single NVMe LV per pod (TopoLVM → LVM on i4i NVMe)
   #
-  # lvm-storage / data-volume:
+  # One PVC only: init containers, app, and Velero FS backup all use `data-volume`.
+  # (Previously two templates duplicated storage and split hydration vs app data.)
+  #
   #   storageClass = topolvm-provisioner
   #   → TopoLVM carves an LV from node-vg (NVMe disk)
-  #   → WaitForFirstConsumer = topology-aware (pod + PV on same node)
-  #   → reclaimPolicy = Retain (NEVER auto-delete LevelDB data)
+  #   → WaitForFirstConsumer = pod + PV on same node
+  #   → reclaimPolicy = Retain (do not auto-delete LevelDB data)
   # ──────────────────────────────────────────────────────────────
   volumeClaimTemplates:
-    - metadata:
-        name: lvm-storage
-        labels:
-          {{- include "ninox-leveldb.labels" . | nindent 10 }}
-        annotations:
-          backup.velero.io/backup-volumes: lvm-storage
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        storageClassName: "topolvm-provisioner"
-        resources:
-          requests:
-            storage: {{ .Values.persistence.size }}
-
-    # Alias so both .Values.app.dataDir and pod spec work
-    # (data-volume is the name used in volumeMounts)
     - metadata:
         name: data-volume
         labels:

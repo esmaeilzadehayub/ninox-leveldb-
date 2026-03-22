@@ -82,8 +82,9 @@ resource "helm_release" "velero" {
     nodeAgent = {
       tolerations = [{ key = "workload-type", operator = "Equal", value = "leveldb", effect = "NoSchedule" }]
       resources = {
-        requests = { cpu = "200m", memory = "256Mi" }
-        limits   = { cpu = "1", memory = "1Gi" }
+        # Large LV backups: give headroom for streaming/dedup without starving the node
+        requests = { cpu = "500m", memory = "1Gi" }
+        limits   = { cpu = "4", memory = "8Gi" }
       }
     }
 

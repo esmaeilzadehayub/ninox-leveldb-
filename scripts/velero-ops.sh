@@ -21,8 +21,11 @@ case "$CMD" in
     BACKUP="${2:-$(velero backup get -o json 2>/dev/null \
       | python3 -c "import sys,json; items=[i for i in json.load(sys.stdin).get('items',[]) if i['status'].get('phase')=='Completed']; print(sorted(items,key=lambda x:x['metadata']['creationTimestamp'])[-1]['metadata']['name'] if items else '')" 2>/dev/null || echo "")}"
     [[ -z "$BACKUP" ]] && die "No completed backups. Specify: $0 restore <name>"
-    read -r -p "Restore ${BACKUP} to ${NAMESPACE}? (yes): " c
-    [[ "$c" == "yes" ]] || { log "Aborted."; exit 0; }
+    if [[ "${VELERO_RESTORE_CONFIRM:-}" != "yes" ]]; then
+      read -r -p "Restore ${BACKUP} to ${NAMESPACE}? (yes): " c
+      [[ "$c" == "yes" ]] || { log "Aborted."; exit 0; }
+    fi
+    # FS backups of TopoLVM PVCs → restore-volumes repopulates the LV from object storage
     velero restore create "restore-$(date +%s)" --from-backup "$BACKUP" \
       --include-namespaces "$NAMESPACE" --restore-volumes=true --existing-resource-policy=update --wait ;;
   restore-test)
