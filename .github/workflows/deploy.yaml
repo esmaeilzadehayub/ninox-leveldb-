@@ -2,7 +2,8 @@ name: Deploy — Terraform + Helm
 
 on:
   push:
-    tags: [main]
+    branches: [main]
+    tags: ["v*.*.*"]
   workflow_dispatch:
     inputs:
       image_tag:
@@ -118,7 +119,7 @@ jobs:
       - name: Smoke test
         run: |
           kubectl run smoke --image=curlimages/curl:8.7.1 \
-            --restart=Never --rm -it -n production \
+            --restart=Never --rm -i -n production \
             -- curl -sf http://ninox-leveldb-lb:8080/healthz
           echo "✓ Health check passed"
 
