@@ -151,7 +151,7 @@ ninox-k8s/
 | Decision | Rationale |
 |---|---|
 | **Single TopoLVM PVC per pod** | One LV holds LevelDB data; init + app + backup must share it (two PVCs would split hydration vs runtime data). |
-| **i4i.4xlarge NVMe nodes** | ~2 Ti per pod needs **3750 GB** local NVMe; `i4i.xlarge` (937 GB) cannot fit a **2 Ti** LV. |
+| **i4i.4xlarge NVMe nodes** | ~2 Ti per pod needs **3750 GB** local NVMe; `i4i.xlarge` . |
 | NVMe over gp3 EBS for DB | Local NVMe latency and IOPS fit LevelDB compaction; TopoLVM on NVMe. |
 | EFS not for steady-state LevelDB | NFS semantics break single-writer / LOCK expectations; use only as migration source. |
 | VPA vs HPA | **VPA** for CPU/RAM per replica; **HPA** only if you intentionally run **sharded** DBs (each replica = separate dataset). |
